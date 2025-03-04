@@ -2,9 +2,17 @@ import sqlite3
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
+import os
 
-# Nome do arquivo do banco de dados
-db_file = 'meu_banco_de_dados.db'
+# Caminho para a pasta "storage" no mesmo diretório que o main.py
+storage_dir = os.path.join(os.path.dirname(__file__), 'storage')
+
+# Criar a pasta "storage" se ela não existir
+if not os.path.exists(storage_dir):
+    os.makedirs(storage_dir)
+
+# Caminho completo para o arquivo do banco de dados dentro da pasta "storage"
+db_file = os.path.join(storage_dir, 'meu_banco_de_dados.db')
 
 # Função para criar a tabela se não existir
 def criar_tabela():
@@ -13,7 +21,7 @@ def criar_tabela():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS registros (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Data DATETIME NOT NULL,
+            Data TEXT NOT NULL,  -- Alterado para TEXT para armazenar a data no formato DD/MM/YYYY
             Horas FLOAT NOT NULL
         )
     ''')
@@ -31,34 +39,46 @@ def horas_minutos_para_decimal(horas_minutos):
     horas, minutos = map(int, horas_minutos.split(':'))
     return horas + minutos / 60
 
+# Função para formatar a data no padrão DD/MM/YYYY
+def formatar_data(data):
+    return datetime.strptime(data, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y')
+
 # Função para inserir dados na tabela
 def inserir_dados(data, horas):
+    data_formatada = formatar_data(data)  # Formata a data para DD/MM/YYYY
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO registros (Data, Horas) VALUES (?, ?)', (data, horas))
+    cursor.execute('INSERT INTO registros (Data, Horas) VALUES (?, ?)', (data_formatada, horas))
     conn.commit()
     conn.close()
+    atualizar_interface()
 
 # Função para atualizar dados na tabela
 def atualizar_dados(id, data, horas):
+    data_formatada = formatar_data(data)  # Formata a data para DD/MM/YYYY
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute('UPDATE registros SET Data = ?, Horas = ? WHERE id = ?', (data, horas, id))
+    cursor.execute('UPDATE registros SET Data = ?, Horas = ? WHERE id = ?', (data_formatada, horas, id))
     conn.commit()
     conn.close()
+    atualizar_interface()
 
 # Função para verificar se já existe um registro no dia de hoje
 def existe_registro_hoje():
-    hoje = datetime.now().strftime('%Y-%m-%d')
+    hoje = datetime.now().strftime('%d/%m/%Y')  # Formata a data atual para DD/MM/YYYY
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM registros WHERE Data LIKE ?', (f'{hoje}%',))
+    cursor.execute('SELECT * FROM registros WHERE Data = ?', (hoje,))
     resultado = cursor.fetchone()
     conn.close()
     return resultado is not None
 
 # Função para parar o timer e salvar os dados
 def parar_timer():
+    if existe_registro_hoje():
+        messagebox.showwarning("Aviso", "Já existe um registro no dia de hoje!")
+        return
+
     tempo_decorrido = timer_label['text']
     horas, minutos, segundos = map(int, tempo_decorrido.split(':'))
     horas_totais = horas + minutos / 60 + segundos / 3600  # Converte para horas decimais
@@ -69,7 +89,7 @@ def parar_timer():
 
     data = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     inserir_dados(data, horas_totais)
-    messagebox.showinfo("Sucesso", f"Dados salvos: {data}, Horas: {decimal_para_horas_minutos(horas_totais)}")
+    messagebox.showinfo("Sucesso", f"Dados salvos: {formatar_data(data)}, Horas: {decimal_para_horas_minutos(horas_totais)}")
     timer_label['text'] = "00:00:00"
     running[0] = False
 
@@ -84,7 +104,7 @@ def insercao_manual():
             horas_decimais = horas_minutos_para_decimal(horas_minutos)
             data = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             inserir_dados(data, horas_decimais)
-            messagebox.showinfo("Sucesso", f"Dados salvos: {data}, Horas: {horas_minutos}")
+            messagebox.showinfo("Sucesso", f"Dados salvos: {formatar_data(data)}, Horas: {horas_minutos}")
         except ValueError:
             messagebox.showerror("Erro", "Formato inválido! Use o formato HH:MM.")
 
@@ -106,7 +126,7 @@ def editar_registro():
     janela_edicao.title("Editar Registro")
 
     # Campos de edição
-    tk.Label(janela_edicao, text="Data (YYYY-MM-DD HH:MM:SS):").grid(row=0, column=0, padx=10, pady=10)
+    tk.Label(janela_edicao, text="Data (DD/MM/YYYY):").grid(row=0, column=0, padx=10, pady=10)
     entry_data = tk.Entry(janela_edicao)
     entry_data.insert(0, data_registro)
     entry_data.grid(row=0, column=1, padx=10, pady=10)
@@ -122,15 +142,48 @@ def editar_registro():
         novas_horas = entry_horas.get()
 
         try:
+            # Verifica se a data está no formato correto
+            datetime.strptime(nova_data, '%d/%m/%Y')
             horas_decimais = horas_minutos_para_decimal(novas_horas)
-            atualizar_dados(id_registro, nova_data, horas_decimais)
+            atualizar_dados(id_registro, nova_data + " 00:00:00", horas_decimais)  # Adiciona um horário fictício
             messagebox.showinfo("Sucesso", "Registro atualizado com sucesso!")
             janela_edicao.destroy()
         except ValueError:
-            messagebox.showerror("Erro", "Formato inválido! Use o formato HH:MM para as horas.")
+            messagebox.showerror("Erro", "Formato inválido! Use o formato DD/MM/YYYY para a data e HH:MM para as horas.")
 
     # Botão para salvar
     tk.Button(janela_edicao, text="Salvar", command=salvar_edicao).grid(row=2, column=0, columnspan=2, pady=10)
+
+# Função para atualizar a interface gráfica
+def atualizar_interface():
+    if 'tabela' in globals():
+        atualizar_dados_tabela()
+
+# Função para atualizar os dados na tabela
+def atualizar_dados_tabela():
+    if 'tabela' not in globals():
+        return
+
+    # Limpa a tabela
+    for row in tabela.get_children():
+        tabela.delete(row)
+
+    # Busca os registros no banco de dados
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM registros')
+    registros = cursor.fetchall()
+    conn.close()
+
+    # Insere os dados na tabela
+    for registro in registros:
+        horas_formatadas = decimal_para_horas_minutos(registro[2])
+        tabela.insert("", tk.END, values=(registro[0], registro[1], horas_formatadas))
+
+    # Calcula a soma das horas
+    soma_horas = sum(registro[2] for registro in registros)
+    soma_horas_formatada = decimal_para_horas_minutos(soma_horas)
+    label_soma_horas.config(text=f"Soma das Horas: {soma_horas_formatada}")
 
 # Função para visualizar os dados da base
 def visualizar_dados():
@@ -157,29 +210,6 @@ def visualizar_dados():
     tabela.configure(yscroll=scrollbar.set)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    # Função para atualizar os dados na tabela
-    def atualizar_dados_tabela():
-        # Limpa a tabela
-        for row in tabela.get_children():
-            tabela.delete(row)
-
-        # Busca os registros no banco de dados
-        conn = sqlite3.connect(db_file)
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM registros')
-        registros = cursor.fetchall()
-        conn.close()
-
-        # Insere os dados na tabela
-        for registro in registros:
-            horas_formatadas = decimal_para_horas_minutos(registro[2])
-            tabela.insert("", tk.END, values=(registro[0], registro[1], horas_formatadas))
-
-        # Calcula a soma das horas
-        soma_horas = sum(registro[2] for registro in registros)
-        soma_horas_formatada = decimal_para_horas_minutos(soma_horas)
-        label_soma_horas.config(text=f"Soma das Horas: {soma_horas_formatada}")
-
     # Botão para inserir horas negativas
     def inserir_horas_negativas():
         horas_minutos = simpledialog.askstring("Inserir Horas Negativas", "Digite a quantidade de horas no formato HH:MM:")
@@ -188,8 +218,7 @@ def visualizar_dados():
                 horas_decimais = horas_minutos_para_decimal(horas_minutos)
                 data = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 inserir_dados(data, horas_decimais * -1)
-                messagebox.showinfo("Sucesso", f"Dados salvos: {data}, Horas: -{horas_minutos}")
-                atualizar_dados_tabela()  # Atualiza a lista de dados
+                messagebox.showinfo("Sucesso", f"Dados salvos: {formatar_data(data)}, Horas: -{horas_minutos}")
             except ValueError:
                 messagebox.showerror("Erro", "Formato inválido! Use o formato HH:MM.")
 
